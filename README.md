@@ -1,6 +1,6 @@
 # BRIVO Video
 
-A Vue 3 web application for viewing live HD camera video and real-time events from the Eagle Eye Networks (EEN) Video Platform, built with the [een-api-toolkit](https://github.com/klaushofrichter/een-api-toolkit).
+A Vue 3 web application for viewing live HD camera video and real-time events from the Eagle Eye Networks (EEN) Video Platform, built with the [een-api-toolkit](https://github.com/klaushofrichter/een-api-toolkit) using the [een-oauth-proxy](https://github.com/klaushofrichter/een-oauth-proxy).
 
 ![BRIVO Video App](screenshot.png)
 
