@@ -1,16 +1,18 @@
-# EEN Video Events
+# BRIVO Video
 
 A Vue 3 web application for viewing live HD camera video and real-time events from the Eagle Eye Networks (EEN) Video Platform, built with the [een-api-toolkit](https://github.com/klaushofrichter/een-api-toolkit).
 
-![EEN Video Events App](screenshot.png)
+![BRIVO Video App](screenshot.png)
 
 ## Features
 
 - **OAuth Authentication** -- Login via Eagle Eye Networks identity provider with token persistence across page refreshes
-- **Camera Selection** -- Dropdown to browse and select from all cameras in your EEN account
+- **Camera Selection** -- Dropdown to browse and select from all cameras in your EEN account, with selection persisted to localStorage
 - **Live HD Video** -- Full-resolution live video streaming using the EEN Live Video Web SDK
 - **Real-Time Event Feed** -- SSE (Server-Sent Events) subscription showing live events (motion detection, person detection, etc.) for the selected camera
-- **Event Preview Images** -- Click any event to view a recorded preview image from that timestamp in a modal
+- **Event Type Filter** -- Multi-select dropdown to filter which event types are subscribed, with select all/unselect all toggle and selection persisted to localStorage
+- **Event Preview Images** -- Click any event to view a recorded preview image from that timestamp in a modal, with bounding box overlays for detection events
+- **Live Bounding Boxes** -- Real-time bounding boxes flash on the live video when detection events arrive within 5 seconds
 - **Audio Notifications** -- Audible beep on each incoming event, with mute/unmute toggle
 - **Dark Mode** -- Three-way theme toggle (system / light / dark) persisted to localStorage
 - **Responsive Layout** -- Video and event list side-by-side on desktop, stacked on mobile
