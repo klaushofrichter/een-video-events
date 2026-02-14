@@ -41,6 +41,11 @@ let currentSubscriptionId: string | null = null
 const MAX_SSE_EVENTS = 100
 const soundEnabled = inject<Ref<boolean>>('soundEnabled', ref(true))
 
+// Event type filter state
+const availableEventTypes = ref<string[]>([])
+const selectedEventTypes = ref<string[]>([])
+const eventFilterOpen = ref(false)
+
 function playEventSound() {
   if (!soundEnabled.value) return
   try {
@@ -212,7 +217,7 @@ function formatEventTimestamp(timestamp: string): string {
 }
 
 /** Start SSE subscription for a camera */
-async function startSSE(cameraId: string) {
+async function startSSE(cameraId: string, skipDiscovery = false) {
   // Clean up previous subscription
   await cleanupSSE()
 
@@ -220,35 +225,49 @@ async function startSSE(cameraId: string) {
   sseError.value = null
   sseLoading.value = true
 
-  // Step 1: Discover available event types for this camera
-  const fieldValuesResult = await listEventFieldValues({
-    actor: `camera:${cameraId}`
-  })
+  if (!skipDiscovery) {
+    // Step 1: Discover available event types for this camera
+    const fieldValuesResult = await listEventFieldValues({
+      actor: `camera:${cameraId}`
+    })
 
-  if (!isMounted.value) {
+    if (!isMounted.value) {
+      sseLoading.value = false
+      return
+    }
+
+    if (fieldValuesResult.error) {
+      sseError.value = `Failed to get event types: ${fieldValuesResult.error.message}`
+      sseLoading.value = false
+      return
+    }
+
+    const discovered: string[] = fieldValuesResult.data.type || []
+    if (discovered.length === 0) {
+      sseError.value = 'No event types available for this camera.'
+      sseLoading.value = false
+      return
+    }
+
+    availableEventTypes.value = discovered
+    ignoreFilterWatch = true
+    selectedEventTypes.value = [...discovered]
+    nextTick(() => { ignoreFilterWatch = false })
+  }
+
+  const typesToUse = selectedEventTypes.value
+  if (typesToUse.length === 0) {
+    sseError.value = 'No event types selected.'
     sseLoading.value = false
     return
   }
 
-  if (fieldValuesResult.error) {
-    sseError.value = `Failed to get event types: ${fieldValuesResult.error.message}`
-    sseLoading.value = false
-    return
-  }
-
-  const availableTypes: string[] = fieldValuesResult.data.type || []
-  if (availableTypes.length === 0) {
-    sseError.value = 'No event types available for this camera.'
-    sseLoading.value = false
-    return
-  }
-
-  // Step 2: Create SSE subscription for all available event types
+  // Step 2: Create SSE subscription for selected event types
   const subscriptionResult = await createEventSubscription({
     deliveryConfig: { type: 'serverSentEvents.v1' },
     filters: [{
       actors: [`camera:${cameraId}`],
-      types: availableTypes.map(t => ({ id: t }))
+      types: typesToUse.map(t => ({ id: t }))
     }]
   })
 
@@ -312,7 +331,7 @@ async function startSSE(cameraId: string) {
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
   const historyResult = await listEvents({
     actor: `camera:${cameraId}`,
-    type__in: availableTypes,
+    type__in: typesToUse,
     startTimestamp__gte: oneDayAgo.toISOString(),
     startTimestamp__lte: now.toISOString(),
     sort: '-startTimestamp',
@@ -332,14 +351,30 @@ async function startSSE(cameraId: string) {
 // Watch for camera selection changes
 watch(selectedCameraId, (newId) => {
   if (newId && isAuthenticated.value) {
+    availableEventTypes.value = []
+    selectedEventTypes.value = []
+    eventFilterOpen.value = false
     startStream(newId)
     startSSE(newId)
   } else {
     stopStream()
     cleanupSSE()
     sseEvents.value = []
+    availableEventTypes.value = []
+    selectedEventTypes.value = []
   }
 })
+
+// Flag to skip watcher when selectedEventTypes is set programmatically
+let ignoreFilterWatch = false
+
+// Watch for event type filter changes (user toggling checkboxes)
+watch(selectedEventTypes, () => {
+  if (ignoreFilterWatch) return
+  if (selectedCameraId.value) {
+    startSSE(selectedCameraId.value, true)
+  }
+}, { deep: true })
 
 onMounted(() => {
   if (isAuthenticated.value) {
@@ -377,17 +412,31 @@ onUnmounted(() => {
 
       <!-- Camera selector and live video -->
       <div v-else class="camera-view">
-        <div class="camera-selector">
-          <label for="camera-select">Camera:</label>
-          <select
-            id="camera-select"
-            :value="selectedCameraId"
-            @change="handleCameraChange"
-          >
-            <option v-for="camera in cameras" :key="camera.id" :value="camera.id">
-              {{ camera.name || camera.id }}
-            </option>
-          </select>
+        <div class="controls-row">
+          <div class="camera-selector">
+            <label for="camera-select">Camera:</label>
+            <select
+              id="camera-select"
+              :value="selectedCameraId"
+              @change="handleCameraChange"
+            >
+              <option v-for="camera in cameras" :key="camera.id" :value="camera.id">
+                {{ camera.name || camera.id }}
+              </option>
+            </select>
+          </div>
+          <div v-if="availableEventTypes.length > 0" class="event-type-filter" @mouseleave="eventFilterOpen = false">
+            <button class="filter-toggle" @click="eventFilterOpen = !eventFilterOpen">
+              Event Types Selected: {{ selectedEventTypes.length }}/{{ availableEventTypes.length }}
+              <span class="filter-arrow">{{ eventFilterOpen ? '\u25B2' : '\u25BC' }}</span>
+            </button>
+            <div v-if="eventFilterOpen" class="filter-dropdown">
+              <label v-for="type in availableEventTypes" :key="type" class="filter-option">
+                <input type="checkbox" :value="type" v-model="selectedEventTypes" />
+                {{ formatEventType(type) }}
+              </label>
+            </div>
+          </div>
         </div>
 
         <!-- Stream error -->
@@ -550,6 +599,72 @@ onUnmounted(() => {
   background-color: white;
 }
 
+.controls-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.event-type-filter {
+  position: relative;
+}
+
+.filter-toggle {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+  background-color: white;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.filter-toggle:hover {
+  border-color: #999;
+}
+
+.filter-arrow {
+  font-size: 10px;
+  margin-left: 8px;
+}
+
+.filter-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background-color: white;
+  border: 1px solid #ccc;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.filter-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.filter-option:hover {
+  background-color: #f5f5f5;
+}
+
+.filter-option input[type="checkbox"] {
+  margin: 0;
+}
+
 .video-events-row {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -701,6 +816,9 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
+  .controls-row {
+    grid-template-columns: 1fr;
+  }
   .video-events-row {
     grid-template-columns: 1fr;
   }
@@ -801,6 +919,25 @@ html[data-theme="dark"] .camera-selector select {
   border-color: #555;
   color: #e0e0e0;
 }
+html[data-theme="dark"] .filter-toggle {
+  background-color: #2a2a2a;
+  border-color: #555;
+  color: #e0e0e0;
+}
+html[data-theme="dark"] .filter-toggle:hover {
+  border-color: #777;
+}
+html[data-theme="dark"] .filter-dropdown {
+  background-color: #2a2a2a;
+  border-color: #555;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+html[data-theme="dark"] .filter-option {
+  color: #e0e0e0;
+}
+html[data-theme="dark"] .filter-option:hover {
+  background-color: #333;
+}
 html[data-theme="dark"] .error-banner {
   background-color: #3a1a1a;
   border-color: #dc3545;
@@ -879,6 +1016,25 @@ html[data-theme="dark"] .modal-no-image {
     background-color: #2a2a2a;
     border-color: #555;
     color: #e0e0e0;
+  }
+  html:not([data-theme]) .filter-toggle {
+    background-color: #2a2a2a;
+    border-color: #555;
+    color: #e0e0e0;
+  }
+  html:not([data-theme]) .filter-toggle:hover {
+    border-color: #777;
+  }
+  html:not([data-theme]) .filter-dropdown {
+    background-color: #2a2a2a;
+    border-color: #555;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+  html:not([data-theme]) .filter-option {
+    color: #e0e0e0;
+  }
+  html:not([data-theme]) .filter-option:hover {
+    background-color: #333;
   }
   html:not([data-theme]) .error-banner {
     background-color: #3a1a1a;
