@@ -53,7 +53,7 @@ onMounted(() => {
           <router-link to="/login">Login</router-link>
         </template>
       </div>
-      <span class="nav-title">EEN Video App</span>
+      <span class="nav-title">BRIVO Video</span>
       <div class="nav-right">
         <button class="sound-toggle" @click="soundEnabled = !soundEnabled" :title="soundEnabled ? 'Mute' : 'Unmute'">
           {{ soundEnabled ? '&#128264;' : '&#128263;' }}
