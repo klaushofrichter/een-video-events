@@ -523,7 +523,8 @@ onUnmounted(() => {
 }
 
 .video-events-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
   gap: 16px;
 }
 
@@ -536,7 +537,6 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   position: relative;
-  flex: 2;
 }
 
 .stream-loading {
@@ -566,8 +566,8 @@ onUnmounted(() => {
   border: 1px solid #ddd;
   border-radius: 4px;
   overflow: hidden;
-  flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -670,7 +670,7 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .video-events-row {
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
   .event-feed {
     width: 100%;
@@ -678,6 +678,7 @@ onUnmounted(() => {
   .event-list {
     max-height: 495px;
     overflow-y: auto;
+    flex: none;
   }
 }
 
