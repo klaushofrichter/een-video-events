@@ -6,6 +6,7 @@ import {
   getRecordedImage,
   formatTimestamp,
   listEventFieldValues,
+  listEvents,
   createEventSubscription,
   connectToEventSubscription,
   deleteEventSubscription
@@ -299,6 +300,27 @@ async function startSSE(cameraId: string) {
 
   sseConnection = connectionResult.data
   sseLoading.value = false
+
+  // Step 4: Backfill with historical events from the last 24 hours
+  const now = new Date()
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+  const historyResult = await listEvents({
+    actor: `camera:${cameraId}`,
+    type__in: availableTypes,
+    startTimestamp__gte: oneDayAgo.toISOString(),
+    startTimestamp__lte: now.toISOString(),
+    sort: '-startTimestamp',
+    pageSize: 100
+  })
+
+  if (!isMounted.value) return
+
+  if (historyResult.data?.results) {
+    // Merge: keep existing SSE events on top, append historical ones, cap at MAX
+    const existingIds = new Set(sseEvents.value.map(e => e.id))
+    const newHistorical = historyResult.data.results.filter(e => !existingIds.has(e.id)) as unknown as SSEEvent[]
+    sseEvents.value = [...sseEvents.value, ...newHistorical].slice(0, MAX_SSE_EVENTS)
+  }
 }
 
 // Watch for camera selection changes
