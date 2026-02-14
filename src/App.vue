@@ -53,7 +53,7 @@ onMounted(() => {
           <router-link to="/login">Login</router-link>
         </template>
       </div>
-      <span class="nav-title">BRIVO Video</span>
+      <a class="nav-title" href="https://github.com/klaushofrichter/een-video-events" target="_blank" rel="noopener noreferrer">BRIVO Video</a>
       <div class="nav-right">
         <button class="sound-toggle" @click="soundEnabled = !soundEnabled" :title="soundEnabled ? 'Mute' : 'Unmute'">
           {{ soundEnabled ? '&#128264;' : '&#128263;' }}
@@ -101,6 +101,12 @@ nav {
   font-weight: 700;
   font-size: 16px;
   white-space: nowrap;
+  color: inherit;
+  text-decoration: none;
+}
+
+.nav-title:hover {
+  text-decoration: underline;
 }
 
 nav a {
