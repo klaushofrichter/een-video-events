@@ -682,7 +682,7 @@ onUnmounted(() => {
     min-height: 0;
   }
   .event-list {
-    max-height: 495px;
+    max-height: 165px;
     overflow-y: auto;
     flex: none;
   }
