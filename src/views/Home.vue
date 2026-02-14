@@ -29,6 +29,7 @@ const streamLoading = ref(false)
 const streamError = ref<string | null>(null)
 const videoKey = ref(0)
 let livePlayer: LivePlayer | null = null
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
 
 // SSE event feed state
 const sseEvents = ref<SSEEvent[]>([])
@@ -119,6 +120,11 @@ async function startStream(cameraId: string) {
 
   // Clean up previous stream
   stopStream()
+
+  if (isIOS) {
+    streamError.value = 'Live HD video is not supported on iOS devices. The EEN Live Video SDK requires features not available in iOS browsers.'
+    return
+  }
 
   streamLoading.value = true
   streamError.value = null
