@@ -2,6 +2,8 @@
 
 A Vue 3 web application for viewing live HD camera video and real-time events from the Eagle Eye Networks (EEN) Video Platform, built with the [een-api-toolkit](https://github.com/klaushofrichter/een-api-toolkit).
 
+![EEN Video Events App](screenshot.png)
+
 ## Features
 
 - **OAuth Authentication** -- Login via Eagle Eye Networks identity provider with token persistence across page refreshes
