@@ -81,6 +81,10 @@ interface BoundingBoxOverlay {
 
 const modalBoundingBoxes = ref<BoundingBoxOverlay[]>([])
 
+// Live video bounding box overlay state
+const videoBoundingBoxes = ref<BoundingBoxOverlay[]>([])
+let videoBoxTimer: ReturnType<typeof setTimeout> | null = null
+
 /** Extract bounding boxes from event data array */
 function extractBoundingBoxes(event: SSEEvent): BoundingBoxOverlay[] {
   if (!event.data || !Array.isArray(event.data)) return []
@@ -144,6 +148,7 @@ async function handleEventClick(event: SSEEvent) {
   modalBoundingBoxes.value = boxes
 
   const result = await getRecordedImage({
+
     deviceId: selectedCameraId.value,
     timestamp__gte: formatTimestamp(event.startTimestamp),
     type: 'preview'
@@ -160,6 +165,39 @@ function closeModal() {
   modalImage.value = null
   modalEvent.value = null
   modalBoundingBoxes.value = []
+}
+
+/** Flash bounding boxes on live video for a recent SSE event */
+async function flashVideoBoxes(event: SSEEvent) {
+  const eventAge = Date.now() - new Date(event.startTimestamp).getTime()
+  if (eventAge > 5000) return
+
+  const includeParams = getIncludeParameterForEventTypes([event.type])
+  if (includeParams.length === 0) return
+
+  const eventResult = await listEvents({
+    actor: `camera:${selectedCameraId.value}`,
+    type__in: [event.type],
+    startTimestamp__gte: formatTimestamp(event.startTimestamp),
+    startTimestamp__lte: formatTimestamp(event.startTimestamp),
+    include: includeParams,
+    pageSize: 1
+  })
+
+  const enrichedEvent = eventResult.data?.results?.find((e: any) => e.id === event.id)
+  if (!enrichedEvent) return
+
+  const boxes = extractBoundingBoxes(enrichedEvent as unknown as SSEEvent)
+  if (boxes.length === 0) return
+
+  // Clear any existing timer
+  if (videoBoxTimer) clearTimeout(videoBoxTimer)
+
+  videoBoundingBoxes.value = boxes
+  videoBoxTimer = setTimeout(() => {
+    videoBoundingBoxes.value = []
+    videoBoxTimer = null
+  }, 250)
 }
 
 // Track component lifecycle
@@ -182,9 +220,14 @@ async function loadCameras() {
   cameras.value = result.data?.results || []
   loading.value = false
 
-  // Auto-select the first camera
+  // Auto-select: prefer stored camera, fall back to first
   if (cameras.value.length > 0 && !selectedCameraId.value) {
-    selectedCameraId.value = cameras.value[0].id
+    const storedId = localStorage.getItem(CAMERA_STORAGE_KEY)
+    if (storedId && cameras.value.some(c => c.id === storedId)) {
+      selectedCameraId.value = storedId
+    } else {
+      selectedCameraId.value = cameras.value[0].id
+    }
   }
 }
 
@@ -243,9 +286,14 @@ function stopStream() {
   streamError.value = null
 }
 
+const CAMERA_STORAGE_KEY = 'selectedCameraId'
+const EVENT_TYPES_STORAGE_KEY = 'selectedEventTypes'
+
 function handleCameraChange(event: Event) {
   const target = event.target as HTMLSelectElement
   selectedCameraId.value = target.value
+  localStorage.setItem(CAMERA_STORAGE_KEY, target.value)
+  localStorage.removeItem(EVENT_TYPES_STORAGE_KEY)
 }
 
 // SSE event feed functions
@@ -319,7 +367,21 @@ async function startSSE(cameraId: string, skipDiscovery = false) {
 
     availableEventTypes.value = discovered
     ignoreFilterWatch = true
-    selectedEventTypes.value = [...discovered]
+
+    // Restore stored filter if camera matches
+    const storedCamera = localStorage.getItem(CAMERA_STORAGE_KEY)
+    const storedTypesJson = localStorage.getItem(EVENT_TYPES_STORAGE_KEY)
+    let restoredTypes: string[] | null = null
+    if (storedCamera === cameraId && storedTypesJson) {
+      try {
+        const parsed = JSON.parse(storedTypesJson)
+        if (Array.isArray(parsed)) {
+          restoredTypes = parsed.filter((t: string) => discovered.includes(t))
+        }
+      } catch { /* ignore */ }
+    }
+
+    selectedEventTypes.value = restoredTypes && restoredTypes.length > 0 ? restoredTypes : [...discovered]
     nextTick(() => { ignoreFilterWatch = false })
   }
 
@@ -370,6 +432,8 @@ async function startSSE(cameraId: string, skipDiscovery = false) {
       playEventSound()
       // Prepend new events (newest first), cap at MAX_SSE_EVENTS
       sseEvents.value = [event, ...sseEvents.value].slice(0, MAX_SSE_EVENTS)
+      // Flash bounding boxes on live video for recent events
+      flashVideoBoxes(event)
     },
     onError: (err: Error) => {
       if (!isMounted.value) return
@@ -422,7 +486,9 @@ async function startSSE(cameraId: string, skipDiscovery = false) {
 watch(selectedCameraId, (newId) => {
   if (newId && isAuthenticated.value) {
     availableEventTypes.value = []
+    ignoreFilterWatch = true
     selectedEventTypes.value = []
+    nextTick(() => { ignoreFilterWatch = false })
     eventFilterOpen.value = false
     startStream(newId)
     startSSE(newId)
@@ -431,7 +497,9 @@ watch(selectedCameraId, (newId) => {
     cleanupSSE()
     sseEvents.value = []
     availableEventTypes.value = []
+    ignoreFilterWatch = true
     selectedEventTypes.value = []
+    nextTick(() => { ignoreFilterWatch = false })
   }
 })
 
@@ -441,6 +509,7 @@ let ignoreFilterWatch = false
 // Watch for event type filter changes (user toggling checkboxes)
 watch(selectedEventTypes, () => {
   if (ignoreFilterWatch) return
+  localStorage.setItem(EVENT_TYPES_STORAGE_KEY, JSON.stringify(selectedEventTypes.value))
   if (selectedCameraId.value) {
     startSSE(selectedCameraId.value, true)
   }
@@ -456,6 +525,7 @@ onUnmounted(() => {
   isMounted.value = false
   stopStream()
   cleanupSSE()
+  if (videoBoxTimer) clearTimeout(videoBoxTimer)
 })
 </script>
 
@@ -501,6 +571,12 @@ onUnmounted(() => {
               <span class="filter-arrow">{{ eventFilterOpen ? '\u25B2' : '\u25BC' }}</span>
             </button>
             <div v-if="eventFilterOpen" class="filter-dropdown">
+              <div
+                class="filter-toggle-all"
+                @click="selectedEventTypes = selectedEventTypes.length === availableEventTypes.length ? [] : [...availableEventTypes]"
+              >
+                {{ selectedEventTypes.length === availableEventTypes.length ? 'Unselect All' : 'Select All' }}
+              </div>
               <label v-for="type in availableEventTypes" :key="type" class="filter-option">
                 <input type="checkbox" :value="type" v-model="selectedEventTypes" />
                 {{ formatEventType(type) }}
@@ -523,6 +599,19 @@ onUnmounted(() => {
             </div>
             <div class="video-wrapper" :class="{ hidden: streamLoading || !selectedCameraId }">
               <video :key="videoKey" ref="videoRef" autoplay muted playsinline />
+              <div
+                v-for="(box, i) in videoBoundingBoxes"
+                :key="i"
+                class="video-bounding-box"
+                :style="{
+                  left: box.x + '%',
+                  top: box.y + '%',
+                  width: box.width + '%',
+                  height: box.height + '%'
+                }"
+              >
+                <span v-if="box.label" class="video-box-label">{{ box.label }}</span>
+              </div>
             </div>
           </div>
 
@@ -750,6 +839,20 @@ onUnmounted(() => {
   margin: 0;
 }
 
+.filter-toggle-all {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid #eee;
+  color: #007bff;
+}
+
+.filter-toggle-all:hover {
+  background-color: #f5f5f5;
+}
+
 .video-events-row {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -777,6 +880,28 @@ onUnmounted(() => {
 
 .video-wrapper {
   width: 100%;
+  position: relative;
+}
+
+.video-bounding-box {
+  position: absolute;
+  border: 2px solid #00ff00;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.video-box-label {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  background-color: rgba(0, 255, 0, 0.8);
+  color: #000;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 2px;
+  white-space: nowrap;
 }
 
 .video-wrapper.hidden {
@@ -1048,6 +1173,13 @@ html[data-theme="dark"] .filter-option {
 html[data-theme="dark"] .filter-option:hover {
   background-color: #333;
 }
+html[data-theme="dark"] .filter-toggle-all {
+  color: #5b9df5;
+  border-bottom-color: #444;
+}
+html[data-theme="dark"] .filter-toggle-all:hover {
+  background-color: #333;
+}
 html[data-theme="dark"] .error-banner {
   background-color: #3a1a1a;
   border-color: #dc3545;
@@ -1144,6 +1276,13 @@ html[data-theme="dark"] .modal-no-image {
     color: #e0e0e0;
   }
   html:not([data-theme]) .filter-option:hover {
+    background-color: #333;
+  }
+  html:not([data-theme]) .filter-toggle-all {
+    color: #5b9df5;
+    border-bottom-color: #444;
+  }
+  html:not([data-theme]) .filter-toggle-all:hover {
     background-color: #333;
   }
   html:not([data-theme]) .error-banner {
