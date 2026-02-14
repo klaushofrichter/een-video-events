@@ -9,7 +9,8 @@ import {
   listEvents,
   createEventSubscription,
   connectToEventSubscription,
-  deleteEventSubscription
+  deleteEventSubscription,
+  getIncludeParameterForEventTypes
 } from 'een-api-toolkit'
 import type { Camera, SSEEvent, SSEConnection, SSEConnectionStatus } from 'een-api-toolkit'
 import LivePlayer from '@een/live-video-web-sdk'
@@ -70,11 +71,77 @@ const modalImage = ref<string | null>(null)
 const modalLoading = ref(false)
 const modalEvent = ref<SSEEvent | null>(null)
 
+interface BoundingBoxOverlay {
+  x: number  // percentage
+  y: number
+  width: number
+  height: number
+  label?: string
+}
+
+const modalBoundingBoxes = ref<BoundingBoxOverlay[]>([])
+
+/** Extract bounding boxes from event data array */
+function extractBoundingBoxes(event: SSEEvent): BoundingBoxOverlay[] {
+  if (!event.data || !Array.isArray(event.data)) return []
+
+  // Build objectId → label map from classification data
+  const labelMap = new Map<string, string>()
+  for (const item of event.data) {
+    if (item.type === 'een.objectClassification.v1' && item.objectId && item.label) {
+      labelMap.set(item.objectId as string, item.label as string)
+    }
+  }
+
+  const boxes: BoundingBoxOverlay[] = []
+  for (const item of event.data) {
+    if (item.type === 'een.objectDetection.v1' && Array.isArray(item.boundingBox)) {
+      const bb = item.boundingBox as number[]
+      if (bb.length === 4 && bb.every(v => typeof v === 'number')) {
+        const [x1, y1, x2, y2] = bb
+        boxes.push({
+          x: x1 * 100,
+          y: y1 * 100,
+          width: (x2 - x1) * 100,
+          height: (y2 - y1) * 100,
+          label: item.objectId ? labelMap.get(item.objectId as string) : undefined
+        })
+      }
+    }
+  }
+  return boxes
+}
+
 async function handleEventClick(event: SSEEvent) {
   modalEvent.value = event
   modalOpen.value = true
   modalLoading.value = true
   modalImage.value = null
+  modalBoundingBoxes.value = []
+
+  // Try extracting bounding boxes from existing event data (historical backfill includes them)
+  let boxes = extractBoundingBoxes(event)
+
+  // If no boxes found and event type supports data schemas, fetch enriched event
+  if (boxes.length === 0) {
+    const includeParams = getIncludeParameterForEventTypes([event.type])
+    if (includeParams.length > 0) {
+      const eventResult = await listEvents({
+        actor: `camera:${selectedCameraId.value}`,
+        type__in: [event.type],
+        startTimestamp__gte: formatTimestamp(event.startTimestamp),
+        startTimestamp__lte: formatTimestamp(event.startTimestamp),
+        include: includeParams,
+        pageSize: 1
+      })
+      const enrichedEvent = eventResult.data?.results?.find((e: any) => e.id === event.id)
+      if (enrichedEvent) {
+        boxes = extractBoundingBoxes(enrichedEvent as unknown as SSEEvent)
+      }
+    }
+  }
+
+  modalBoundingBoxes.value = boxes
 
   const result = await getRecordedImage({
     deviceId: selectedCameraId.value,
@@ -92,6 +159,7 @@ function closeModal() {
   modalOpen.value = false
   modalImage.value = null
   modalEvent.value = null
+  modalBoundingBoxes.value = []
 }
 
 // Track component lifecycle
@@ -329,13 +397,15 @@ async function startSSE(cameraId: string, skipDiscovery = false) {
   // Step 4: Backfill with historical events from the last 24 hours
   const now = new Date()
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+  const historyInclude = getIncludeParameterForEventTypes(typesToUse)
   const historyResult = await listEvents({
     actor: `camera:${cameraId}`,
     type__in: typesToUse,
     startTimestamp__gte: oneDayAgo.toISOString(),
     startTimestamp__lte: now.toISOString(),
     sort: '-startTimestamp',
-    pageSize: 100
+    pageSize: 100,
+    ...(historyInclude.length > 0 ? { include: historyInclude } : {})
   })
 
   if (!isMounted.value) return
@@ -510,7 +580,22 @@ onUnmounted(() => {
         </div>
         <div class="modal-body">
           <div v-if="modalLoading" class="modal-loading">Loading image...</div>
-          <img v-else-if="modalImage" :src="modalImage" alt="Event preview" class="modal-image" />
+          <div v-else-if="modalImage" class="modal-image-container">
+            <img :src="modalImage" alt="Event preview" class="modal-image" />
+            <div
+              v-for="(box, i) in modalBoundingBoxes"
+              :key="i"
+              class="bounding-box"
+              :style="{
+                left: box.x + '%',
+                top: box.y + '%',
+                width: box.width + '%',
+                height: box.height + '%'
+              }"
+            >
+              <span v-if="box.label" class="bounding-box-label">{{ box.label }}</span>
+            </div>
+          </div>
           <div v-else class="modal-no-image">No preview image available.</div>
         </div>
       </div>
@@ -891,10 +976,35 @@ onUnmounted(() => {
   min-height: 200px;
 }
 
+.modal-image-container {
+  position: relative;
+  width: 100%;
+}
+
 .modal-image {
   width: 100%;
   display: block;
   border-radius: 4px;
+}
+
+.bounding-box {
+  position: absolute;
+  border: 2px solid #00ff00;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.bounding-box-label {
+  position: absolute;
+  top: -20px;
+  left: 0;
+  background-color: rgba(0, 255, 0, 0.8);
+  color: #000;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
 }
 
 .modal-loading,
