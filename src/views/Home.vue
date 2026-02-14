@@ -567,7 +567,8 @@ onUnmounted(() => {
   border-radius: 4px;
   overflow: hidden;
   min-width: 0;
-  min-height: 0;
+  height: 0;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -631,7 +632,10 @@ onUnmounted(() => {
 
 .event-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ccc #f5f5f5;
 }
 
 .event-item {
@@ -674,6 +678,8 @@ onUnmounted(() => {
   }
   .event-feed {
     width: 100%;
+    height: auto;
+    min-height: 0;
   }
   .event-list {
     max-height: 495px;
@@ -813,6 +819,9 @@ html[data-theme="dark"] .status-error {
 html[data-theme="dark"] .event-item:hover {
   background-color: #2a2a2a;
 }
+html[data-theme="dark"] .event-list {
+  scrollbar-color: #555 #1a1a1a;
+}
 html[data-theme="dark"] .modal-content {
   background-color: #222;
 }
@@ -888,6 +897,9 @@ html[data-theme="dark"] .modal-no-image {
   }
   html:not([data-theme]) .event-item:hover {
     background-color: #2a2a2a;
+  }
+  html:not([data-theme]) .event-list {
+    scrollbar-color: #555 #1a1a1a;
   }
   html:not([data-theme]) .modal-content {
     background-color: #222;
