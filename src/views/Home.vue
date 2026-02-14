@@ -36,7 +36,7 @@ const sseError = ref<string | null>(null)
 const sseLoading = ref(false)
 let sseConnection: SSEConnection | null = null
 let currentSubscriptionId: string | null = null
-const MAX_SSE_EVENTS = 20
+const MAX_SSE_EVENTS = 100
 const soundEnabled = inject<Ref<boolean>>('soundEnabled', ref(true))
 
 function playEventSound() {
@@ -674,6 +674,10 @@ onUnmounted(() => {
   }
   .event-feed {
     width: 100%;
+  }
+  .event-list {
+    max-height: 495px;
+    overflow-y: auto;
   }
 }
 
